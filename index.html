@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Run">
+<meta name="theme-color" content="#030712">
+<link rel="manifest" href="manifest-run.json"><link rel="apple-touch-icon" href="icon-run.png"><title>ランタイマー</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#030712;color:#f3f4f6;font-family:system-ui,sans-serif;min-height:100vh;padding:16px 16px 40px;display:flex;flex-direction:column;align-items:center}
+  .card{width:100%;max-width:420px;background:#111827;border:1px solid #1f2937;border-radius:24px;padding:28px 16px;text-align:center;margin-bottom:20px}
+  .card.alert{border:4px solid #ef4444;box-shadow:0 0 30px rgba(239,68,68,.6)}
+  .name{color:#9ca3af;font-size:18px;margin:0 0 8px}
+  .time{font-size:92px;font-weight:900;line-height:1;letter-spacing:-3px;font-variant-numeric:tabular-nums}
+  .speed{margin-top:14px;font-size:26px;font-weight:700;color:#fb923c}
+  .speed b{font-size:64px;color:#fff}
+  .warn{color:#ef4444;font-weight:700;font-size:20px;margin-top:10px;height:24px}
+  .ctl{display:flex;gap:24px;align-items:center;margin-bottom:24px}
+  button{border:0;border-radius:50%;color:#fff;background:#1f2937;width:64px;height:64px;font-size:26px}
+  button:active{transform:scale(.9)}
+  #play{width:96px;height:96px;font-size:40px;background:#2563eb}
+  #play.run{background:#ea580c}
+  .list{width:100%;max-width:420px}
+  .row{display:flex;justify-content:space-between;padding:14px 16px;border-radius:12px;background:rgba(17,24,39,.5);margin-bottom:8px;border:1px solid transparent}
+  .row.cur{background:#1f2937;border-color:rgba(59,130,246,.5)}
+  .row .n{font-weight:700;color:#d1d5db}.row.cur .n{color:#60a5fa}
+  .row .d{color:#6b7280;margin-left:10px}
+  .row .s{font-weight:900;color:#6b7280}.row.cur .s{color:#fff}
+  #lock{font-size:12px;color:#6b7280;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <p class="name" id="name"></p>
+  <div class="time" id="time"></div>
+  <div class="speed">時速 <b id="speed"></b> km</div>
+  <div class="warn" id="warn"></div>
+</div>
+<div class="ctl">
+  <button id="prev">⏮</button>
+  <button id="play">▶</button>
+  <button id="next">⏭</button>
+</div>
+<div class="list" id="list"></div>
+<div id="lock"></div>
+
+<script>
+const phases=[
+  {name:"Warm up",duration:180,speed:8},
+  {name:"Cruise",duration:240,speed:9},
+  {name:"Wave",duration:120,speed:11},
+  {name:"Cruise",duration:180,speed:9},
+  {name:"Wave",duration:60,speed:11},
+  {name:"Cooldown",duration:120,speed:6},
+];
+let idx=0, left=phases[0].duration, running=false, endAt=0, tick=null, lastBeep=-1;
+const $=id=>document.getElementById(id);
+const fmt=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+
+// 音（ユーザー操作で初期化）
+let ac=null;
+function beep(freq=880,dur=0.15){
+  try{
+    ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+    const o=ac.createOscillator(),g=ac.createGain();
+    o.frequency.value=freq;o.connect(g);g.connect(ac.destination);
+    g.gain.setValueAtTime(.4,ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+dur);
+    o.start();o.stop(ac.currentTime+dur);
+  }catch(e){}
+}
+const vib=p=>{try{navigator.vibrate&&navigator.vibrate(p)}catch(e){}};
+
+// 画面スリープ防止
+let wl=null;
+async function getLock(){
+  if(!('wakeLock' in navigator)){$('lock').textContent='この端末は画面常時ONに未対応';return}
+  try{
+    wl=await navigator.wakeLock.request('screen');
+    $('lock').textContent='画面常時ON: 有効';
+    wl.addEventListener('release',()=>{$('lock').textContent=''});
+  }catch(e){$('lock').textContent='画面常時ON: 失敗'}
+}
+async function releaseLock(){try{if(wl){await wl.release();wl=null}}catch(e){}$('lock').textContent=''}
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&running)getLock();
+});
+
+function render(){
+  const p=phases[idx];
+  $('name').textContent=`${p.name} - ${idx+1}/${phases.length}`;
+  $('time').textContent=fmt(left);
+  $('speed').textContent=p.speed;
+  const alert=running&&left<=10&&left>0;
+  $('card').classList.toggle('alert',alert);
+  $('warn').textContent=alert?'速度変更 準備！':'';
+  $('play').textContent=running?'⏸':'▶';
+  $('play').classList.toggle('run',running);
+  $('list').innerHTML='<h3 style="color:#9ca3af;padding-left:8px">メニュー（タップでジャンプ）</h3>'+
+    phases.map((q,i)=>`<div class="row ${i===idx?'cur':''}" data-i="${i}"><div><span class="n">${q.name}</span><span class="d">${q.duration/60}分</span></div><div class="s">${q.speed} <small>km/h</small></div></div>`).join('');
+}
+
+function loop(){
+  // 終了時刻との差分で計算（バックグラウンドでもずれない）
+  const rem=Math.max(0,Math.ceil((endAt-Date.now())/1000));
+  if(rem!==left){
+    left=rem;
+    if(left>0&&left<=3){beep(660,.12);vib(80)}
+  }
+  if(left<=0){
+    if(idx<phases.length-1){
+      beep(1100,.4);vib([200,100,200]);
+      idx++;left=phases[idx].duration;endAt=Date.now()+left*1000;
+    }else{
+      beep(1100,.8);vib([400,150,400,150,400]);
+      stop();
+    }
+  }
+  render();
+}
+function start(){
+  running=true;endAt=Date.now()+left*1000;
+  beep(1,0.01); // AudioContext解除
+  getLock();
+  clearInterval(tick);tick=setInterval(loop,250);
+  render();
+}
+function stop(){
+  running=false;clearInterval(tick);releaseLock();render();
+}
+function jump(i){
+  idx=i;left=phases[i].duration;stop();
+}
+$('play').onclick=()=>running?stop():start();
+$('next').onclick=()=>idx<phases.length-1&&jump(idx+1);
+$('prev').onclick=()=>idx>0&&jump(idx-1);
+$('list').onclick=e=>{const r=e.target.closest('.row');if(r)jump(+r.dataset.i)};
+render();
+</script>
+<script>if('serviceWorker' in navigator)navigator.serviceWorker.register('sw-run.js')</script></body>
+</html>

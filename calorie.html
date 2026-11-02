@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Cal">
+<meta name="theme-color" content="#030712">
+<link rel="manifest" href="manifest-cal.json"><link rel="apple-touch-icon" href="icon-cal.png"><title>カロリー記録</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#030712;color:#f3f4f6;font-family:system-ui,sans-serif;padding-bottom:40px}
+  .wrap{max-width:440px;margin:0 auto}
+  .head{background:#111827;border-bottom:1px solid #1f2937;border-radius:0 0 24px 24px;padding:24px;text-align:center;margin-bottom:20px}
+  .lbl{font-size:13px;color:#9ca3af}
+  .big{font-size:60px;font-weight:900;letter-spacing:-2px;color:#34d399}
+  .big.over{color:#ef4444}
+  .big small{font-size:22px;opacity:.7}
+  .eq{display:flex;justify-content:space-around;background:#030712;border:1px solid #1f2937;border-radius:16px;padding:12px;margin-top:14px}
+  .eq div{text-align:center;font-size:12px}.eq b{display:block;font-size:18px}
+  .box{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:16px;margin:0 16px 16px}
+  h2{margin:0 0 12px;font-size:17px}
+  .in{display:flex;gap:8px;margin-bottom:10px}
+  input{background:#030712;border:1px solid #1f2937;border-radius:12px;padding:12px;color:#fff;font-size:16px;min-width:0}
+  input.t{flex:1}input.n{width:76px}
+  button{border:0;border-radius:12px;color:#fff;padding:12px 14px;font-size:16px}
+  .b1{background:#2563eb}.b2{background:#ea580c}.ai{width:100%;background:rgba(79,70,229,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3)}
+  .quick{background:#1f2937;color:#fdba74;font-size:12px;padding:8px 12px;margin-bottom:10px}
+  .item{display:flex;justify-content:space-between;align-items:center;background:rgba(3,7,18,.5);border:1px solid #1f2937;border-radius:12px;padding:10px 12px;margin-top:8px}
+  .item button{background:none;color:#6b7280;padding:4px 8px}
+  .date{display:flex;justify-content:space-between;align-items:center;margin:0 16px 14px;color:#9ca3af}
+  .date button{background:#1f2937}
+  details{margin:0 16px;color:#6b7280;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="lbl">今日あと食べられるカロリー</div>
+    <div class="big" id="rem"></div>
+    <div class="eq">
+      <div><span class="lbl">ベース</span><b id="goal"></b></div>
+      <div style="align-self:center">＋</div>
+      <div style="color:#fb923c"><span>運動</span><b id="ex"></b></div>
+      <div style="align-self:center">－</div>
+      <div style="color:#60a5fa"><span>食事</span><b id="fd"></b></div>
+    </div>
+  </div>
+
+  <div class="date"><button id="dp">◀</button><span id="dl"></span><button id="dn">▶</button></div>
+
+  <div class="box">
+    <h2>🍚 食事を記録</h2>
+    <div class="in">
+      <input class="t" id="fname" placeholder="例: 唐揚げ定食">
+      <input class="n" id="fcal" type="number" inputmode="numeric" placeholder="kcal">
+      <button class="b1" id="fadd">＋</button>
+    </div>
+    <button class="ai" id="ai">✨ カロリーが分からない場合はAIにお任せ</button>
+    <div id="flist"></div>
+  </div>
+
+  <div class="box">
+    <h2>🔥 運動を記録</h2>
+    <button class="quick" id="quick">🏃 ウェーブラン(15分) +165kcal をクイック追加</button>
+    <div class="in">
+      <input class="t" id="ename" placeholder="例: ランニング">
+      <input class="n" id="ecal" type="number" inputmode="numeric" placeholder="kcal">
+      <button class="b2" id="eadd">＋</button>
+    </div>
+    <div id="elist"></div>
+  </div>
+
+  <details>
+    <summary>設定（目標カロリー / Gemini APIキー）</summary>
+    <div class="in" style="margin-top:10px"><input class="t" id="goalIn" type="number" placeholder="目標kcal"></div>
+    <div class="in"><input class="t" id="key" type="password" placeholder="Gemini APIキー（この端末内にのみ保存）"></div>
+  </details>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch(e){return d}};
+const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+const iso=d=>{const z=new Date(d.getTime()-d.getTimezoneOffset()*6e4);return z.toISOString().slice(0,10)};
+let day=iso(new Date());
+let data=load('cal-data',{});          // {日付:{foods:[],exs:[]}}
+let goal=load('cal-goal',2000);
+const cur=()=>data[day]??(data[day]={foods:[],exs:[]});
+const sum=a=>a.reduce((s,i)=>s+i.cal,0);
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function render(){
+  const d=cur(),f=sum(d.foods),e=sum(d.exs),r=goal+e-f;
+  $('rem').innerHTML=r+'<small> kcal</small>';$('rem').classList.toggle('over',r<0);
+  $('goal').textContent=goal;$('ex').textContent=e;$('fd').textContent=f;
+  $('dl').textContent=day===iso(new Date())?`今日 (${day})`:day;
+  $('flist').innerHTML=d.foods.map((x,i)=>`<div class="item"><span>${x.ai?'✨ ':''}${esc(x.name)}</span><span><b style="color:#60a5fa">${x.cal}</b> kcal <button data-t="foods" data-i="${i}">🗑</button></span></div>`).join('');
+  $('elist').innerHTML=d.exs.map((x,i)=>`<div class="item"><span>${esc(x.name)}</span><span><b style="color:#fb923c">+${x.cal}</b> kcal <button data-t="exs" data-i="${i}">🗑</button></span></div>`).join('');
+  save('cal-data',data);
+}
+function add(t,name,cal,ai){
+  if(!name||isNaN(cal))return false;
+  cur()[t].push({name,cal,ai});render();return true;
+}
+$('fadd').onclick=()=>{if(add('foods',$('fname').value.trim(),parseInt($('fcal').value,10)))$('fname').value=$('fcal').value=''};
+$('eadd').onclick=()=>{if(add('exs',$('ename').value.trim(),parseInt($('ecal').value,10)))$('ename').value=$('ecal').value=''};
+$('quick').onclick=()=>add('exs','ウェーブラン(15分)',165);
+document.body.addEventListener('click',e=>{
+  const b=e.target.closest('button[data-t]');if(!b)return;
+  cur()[b.dataset.t].splice(+b.dataset.i,1);render();
+});
+const shift=n=>{const d=new Date(day);d.setDate(d.getDate()+n);day=iso(d);render()};
+$('dp').onclick=()=>shift(-1);$('dn').onclick=()=>shift(1);
+
+$('goalIn').value=goal;
+$('goalIn').onchange=()=>{goal=parseInt($('goalIn').value,10)||2000;save('cal-goal',goal);render()};
+$('key').value=load('cal-key','');
+$('key').onchange=()=>save('cal-key',$('key').value.trim());
+
+$('ai').onclick=async()=>{
+  const name=$('fname').value.trim(),key=$('key').value.trim();
+  if(!name)return alert('食事名を入力してください');
+  if(!key)return alert('設定でGemini APIキーを入力してください');
+  $('ai').disabled=true;$('ai').textContent='AIが計算中...';
+  try{
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        contents:[{parts:[{text:name}]}],
+        systemInstruction:{parts:[{text:"ユーザーが入力した食事の一般的なカロリー（kcal）を推測し、数字のみ（例: 250）を出力してください。単位やテキストは一切含めないでください。複数入力された場合は合計値を出力してください。"}]}
+      })});
+    const j=await r.json();
+    const t=j.candidates?.[0]?.content?.parts?.[0]?.text||'';
+    const n=parseInt(t.replace(/[^0-9]/g,''),10);
+    if(isNaN(n))throw new Error(j.error?.message||'数値を取得できませんでした');
+    add('foods',name,n,true);$('fname').value=$('fcal').value='';
+  }catch(err){alert('AI推定に失敗: '+err.message)}
+  $('ai').disabled=false;$('ai').textContent='✨ カロリーが分からない場合はAIにお任せ';
+};
+render();
+</script>
+<script>if('serviceWorker' in navigator)navigator.serviceWorker.register('sw-cal.js')</script></body>
+</html>
